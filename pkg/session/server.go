@@ -312,6 +312,10 @@ func (s *Server) Create(ctx *gin.Context, opts ...TunnelOption) (sess TunnelSess
 		AccountID:  opt.Account.ID,
 		Comment:    comment,
 		Type:       model.NORMALType,
+		// Persist the connection token id (Core Session.connection_token_id)
+		// so a session can be looked up exactly by the token that created it,
+		// the same way Koko does.
+		TokenId:    opt.authInfo.Id,
 	}
 	sess.ModelSession = &jmsSession
 	sess.ConnectedCallback = s.RegisterConnectedCallback(jmsSession)

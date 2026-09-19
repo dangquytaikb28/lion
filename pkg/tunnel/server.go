@@ -22,6 +22,7 @@ import (
 	"lion/pkg/gateway"
 	"lion/pkg/guacd"
 	"lion/pkg/logger"
+	"lion/pkg/monitorcap"
 	"lion/pkg/proxy"
 	"lion/pkg/session"
 
@@ -490,6 +491,19 @@ func (g *GuacamoleTunnelServer) Monitor(ctx *gin.Context) {
 		_ = ws.WriteMessage(websocket.TextMessage, []byte(ErrBadParams.String()))
 		return
 	}
+	// Middleware already enforced the session-scoped ticket. Re-check here so a
+	// websocket that bypasses the HTML handler still cannot substitute sessions.
+	if _, err := monitorcap.Verify(
+		monitorcap.SecretFromEnv(),
+		monitorTicket(ctx),
+		sessionId,
+		user.ID,
+		time.Now().UTC(),
+	); err != nil {
+		logger.Errorf("Monitor ticket rejected session=%s err=%s", sessionId, err)
+		_ = ws.WriteMessage(websocket.TextMessage, []byte(ErrPermission.String()))
+		return
+	}
 
 	result, err := g.JmsService.ValidateJoinSessionPermission(user.ID, sessionId)
 	if err != nil {
@@ -519,8 +533,11 @@ func (g *GuacamoleTunnelServer) Monitor(ctx *gin.Context) {
 		ws:          ws,
 		Service:     g,
 		User:        user,
+		// Monitor is view-only: guacd joins are writable by default, so the
+		// tunnel itself must refuse input (RDP-07 read-only monitoring).
+		readOnly: true,
 	}
-	logger.Infof("User %s start to monitor session %s", user, sessionId)
+	logger.Infof("User %s start to monitor session %s (read-only)", user, sessionId)
 	logObj := model.SessionLifecycleLog{User: user.String()}
 	g.RecordLifecycleLog(sessionId, model.AdminJoinMonitor, logObj)
 	defer func() {
@@ -529,6 +546,17 @@ func (g *GuacamoleTunnelServer) Monitor(ctx *gin.Context) {
 	_ = conn.Run(ctx.Request.Context())
 	g.Cache.RemoveMonitorTunneler(sessionId, tunnelCon)
 	logger.Infof("User %s stop to monitor session %s", user, sessionId)
+}
+
+func monitorTicket(ctx *gin.Context) string {
+	if t := strings.TrimSpace(ctx.Query(monitorcap.QueryName)); t != "" {
+		return t
+	}
+	cookie, err := ctx.Cookie(monitorcap.CookieName)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(cookie)
 }
 
 func (g *GuacamoleTunnelServer) CreateShare(ctx *gin.Context) {

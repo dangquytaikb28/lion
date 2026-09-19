@@ -45,3 +45,4 @@ ui/pnpm-debug.log*
 *.sw?
 build
 build/
+lion.a6

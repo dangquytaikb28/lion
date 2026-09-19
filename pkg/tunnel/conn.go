@@ -61,7 +61,8 @@ type Connection struct {
 
 	clipboardFilter *clipboardPolicyFilter
 
-	done chan struct{}
+	done     chan struct{}
+	killOnce sync.Once
 
 	traceLock sync.Mutex
 	traceMap  map[*guacd.Tunnel]struct{}
@@ -347,6 +348,13 @@ func (t *Connection) Run(ctx *gin.Context) (err error) {
 			t.Service.RecordLifecycleLog(t.Sess.ID, model.AssetConnectFinished, reason)
 			logger.Errorf("Session[%s] request ctx done", t)
 			return nil
+		case <-t.done:
+			// Killed server-side (admin terminate): close both transports now
+			// instead of waiting for the client to honour the error instruction.
+			_ = t.ws.Close()
+			_ = t.guacdTunnel.Close()
+			logger.Infof("Session[%s] closed by server-side kill", t)
+			return nil
 		case <-activeChan:
 			latestActive = time.Now()
 		case detectTime := <-activeDetectTicker.C:
@@ -409,6 +417,7 @@ func (t *Connection) HandleTask(task *model.TerminalTask) error {
 		_ = t.SendWsMessage(ins.Instruction())
 		reason := model.SessionLifecycleLog{Reason: string(model.ReasonErrAdminTerminate)}
 		t.Service.RecordLifecycleLog(t.Sess.ID, model.AssetConnectFinished, reason)
+		t.Kill()
 	case model.TaskPermExpired:
 		t.PermBecomeExpired(task.Name, task.Args)
 	case model.TaskPermValid:
@@ -418,6 +427,16 @@ func (t *Connection) HandleTask(task *model.TerminalTask) error {
 	}
 	logger.Infof("Session[%s] handle task %s", t, task.Name)
 	return nil
+}
+
+// Kill signals Run to tear the session down server-side. It is idempotent and
+// safe to call after Run has already returned (client disconnect race).
+func (t *Connection) Kill() {
+	t.killOnce.Do(func() {
+		if t.done != nil {
+			close(t.done)
+		}
+	})
 }
 
 func (t *Connection) String() string {

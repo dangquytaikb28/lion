@@ -29,6 +29,21 @@ type MonitorCon struct {
 	Meta    *MetaShareUserMessage
 
 	lockedStatus atomic.Bool
+
+	// readOnly drops every client instruction except keep-alive/flow control so
+	// a monitor can never inject input into the joined guacd connection.
+	// Enforced here (server side); the browser UI is not trusted for this.
+	readOnly bool
+}
+
+// readOnlyPassthrough reports whether a client instruction may reach guacd
+// from a read-only monitor: only sync/nop keep-alives and stream acks.
+func readOnlyPassthrough(opcode string) bool {
+	switch opcode {
+	case guacd.InstructionClientSync, guacd.InstructionClientNop, guacd.InstructionStreamingAck:
+		return true
+	}
+	return false
 }
 
 func (m *MonitorCon) SendWsMessage(msg guacd.Instruction) error {
@@ -109,6 +124,10 @@ func (m *MonitorCon) Run(ctx context.Context) (err error) {
 					}
 					continue
 				}
+				if t.readOnly && !readOnlyPassthrough(ret.Opcode) {
+					logger.Debugf("Monitor[%s] read-only drop client opcode[%s]", t.Id, ret.Opcode)
+					continue
+				}
 				if t.lockedStatus.Load() {
 					switch ret.Opcode {
 					case guacd.InstructionClientSync,
@@ -130,6 +149,9 @@ func (m *MonitorCon) Run(ctx context.Context) (err error) {
 				}
 			} else {
 				logger.Errorf("Monitor[%s] parse instruction err %s", t.Id, err2)
+				if t.readOnly {
+					continue
+				}
 			}
 			_, err3 := t.writeTunnelMessage(message)
 			if err3 != nil {
