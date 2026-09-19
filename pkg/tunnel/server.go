@@ -515,8 +515,11 @@ func (g *GuacamoleTunnelServer) Monitor(ctx *gin.Context) {
 		ws:          ws,
 		Service:     g,
 		User:        user,
+		// Monitor is view-only: guacd joins are writable by default, so the
+		// tunnel itself must refuse input (RDP-07 read-only monitoring).
+		readOnly: true,
 	}
-	logger.Infof("User %s start to monitor session %s", user, sessionId)
+	logger.Infof("User %s start to monitor session %s (read-only)", user, sessionId)
 	logObj := model.SessionLifecycleLog{User: user.String()}
 	g.RecordLifecycleLog(sessionId, model.AdminJoinMonitor, logObj)
 	defer func() {
