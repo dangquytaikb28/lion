@@ -27,7 +27,11 @@ func JmsCookieAuth(jmsService *service.JMService) gin.HandlerFunc {
 		}
 		user, err = jmsService.CheckUserCookie(cookies)
 		if err != nil {
-			logger.Errorf("Check user cookie failed: %+v %s", cookies, err.Error())
+			names := make([]string, 0, len(cookies))
+			for name := range cookies {
+				names = append(names, name)
+			}
+			logger.Errorf("Check user cookie failed names=%v err=%s", names, err.Error())
 			loginUrl := fmt.Sprintf("/core/auth/login/?next=%s", url.QueryEscape(ctx.Request.URL.RequestURI()))
 			ctx.Redirect(http.StatusFound, loginUrl)
 			ctx.Abort()
